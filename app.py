@@ -3,13 +3,200 @@ import re
 import requests
 import base64
 import time
+from io import BytesIO
+from PIL import Image
 from flask import Flask, request, jsonify
 from openai import OpenAI
 from dotenv import load_dotenv
+from urllib.parse import urlparse
+from typing import List, Dict, Tuple
 
 # --- 初始化与配置 ---
 
+# 加载 .env 文件中的环境变量
+load_dotenv()
+
 DISABLE_VISION = os.getenv("DISABLE_VISION", "1") == "1"  # 回退：1 时完全禁用图片理解（默认开启）
+MAX_IMAGES_PER_BATCH = int(os.getenv("MAX_IMAGES_PER_BATCH", "10"))  # 单批最多图片数
+IMAGE_MAX_SIZE = int(os.getenv("IMAGE_MAX_SIZE", "1024"))  # 图片压缩尺寸
+IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))  # JPEG 压缩质量
+MAX_SECTION_CHARS = int(os.getenv("MAX_SECTION_CHARS", "60000"))  # 单章节文本字符上限
+
+# --- 多模态处理核心函数 ---
+
+def extract_images_from_markdown(markdown_text: str) -> List[Tuple[str, int]]:
+    """
+    从 Markdown 文本中提取所有图片链接及其位置
+    返回: [(image_url, position), ...]
+    """
+    pattern = r'!\[.*?\]\((.*?)\)'
+    matches = []
+    for match in re.finditer(pattern, markdown_text):
+        url = match.group(1).strip()
+        if url:  # 跳过空链接
+            matches.append((url, match.start()))
+    return matches
+
+def parse_prd_sections(markdown_text: str) -> List[Dict]:
+    """
+    解析 PRD 为章节结构，建立文本-图片映射
+    返回: [{"title": str, "text": str, "images": [url, ...], "start_pos": int, "end_pos": int}, ...]
+    """
+    sections = []
+    lines = markdown_text.split('\n')
+    
+    current_section = {"title": "前言", "text": "", "images": [], "start_pos": 0, "end_pos": 0}
+    current_pos = 0
+    
+    for line in lines:
+        line_len = len(line) + 1  # +1 for newline
+        
+        # 检测标题（H1 或 H2）
+        if line.startswith('# ') or line.startswith('## '):
+            # 保存当前章节
+            if current_section["text"].strip():
+                current_section["end_pos"] = current_pos
+                current_section["text"] = current_section["text"].strip()
+                sections.append(current_section)
+            
+            # 开始新章节
+            title = line.lstrip('#').strip()
+            current_section = {
+                "title": title,
+                "text": "",
+                "images": [],
+                "start_pos": current_pos,
+                "end_pos": 0
+            }
+        else:
+            current_section["text"] += line + '\n'
+        
+        current_pos += line_len
+    
+    # 保存最后一个章节
+    if current_section["text"].strip():
+        current_section["end_pos"] = current_pos
+        current_section["text"] = current_section["text"].strip()
+        sections.append(current_section)
+    
+    # 为每个章节提取图片
+    all_images = extract_images_from_markdown(markdown_text)
+    for section in sections:
+        section["images"] = [
+            img_url for img_url, pos in all_images
+            if section["start_pos"] <= pos < section["end_pos"]
+        ]
+    
+    return sections
+
+def download_and_process_image(url: str, max_size: int = IMAGE_MAX_SIZE, quality: int = IMAGE_QUALITY) -> str:
+    """
+    下载图片、压缩并转为 base64
+    返回: base64 字符串 或 None（失败时）
+    """
+    try:
+        # 下载图片
+        response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        response.raise_for_status()
+        
+        # 打开图片
+        img = Image.open(BytesIO(response.content))
+        
+        # 转换为 RGB（去除透明通道）
+        if img.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+            img = background
+        
+        # 压缩尺寸
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        
+        # 转为 base64
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=quality, optimize=True)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        return f"data:image/jpeg;base64,{img_base64}"
+    
+    except Exception as e:
+        print(f"处理图片失败 {url}: {e}")
+        return None
+
+def create_batches_from_sections(sections: List[Dict], max_images: int = MAX_IMAGES_PER_BATCH) -> List[Dict]:
+    """
+    将章节智能分批，确保每批不超过图片数量限制
+    返回: [{"sections": [section, ...], "total_images": int, "total_chars": int}, ...]
+    """
+    batches = []
+    current_batch = {"sections": [], "total_images": 0, "total_chars": 0}
+    
+    for section in sections:
+        section_images = len(section["images"])
+        section_chars = len(section["text"])
+        
+        # 检查是否需要开始新批次
+        if current_batch["sections"] and (
+            current_batch["total_images"] + section_images > max_images or
+            current_batch["total_chars"] + section_chars > MAX_SECTION_CHARS
+        ):
+            batches.append(current_batch)
+            current_batch = {"sections": [], "total_images": 0, "total_chars": 0}
+        
+        # 添加到当前批次
+        current_batch["sections"].append(section)
+        current_batch["total_images"] += section_images
+        current_batch["total_chars"] += section_chars
+    
+    # 保存最后一批
+    if current_batch["sections"]:
+        batches.append(current_batch)
+    
+    return batches
+
+def build_vision_messages(batch: Dict, prompt_template: str, batch_index: int, total_batches: int) -> List[Dict]:
+    """
+    构建多模态消息（包含文本和图片）
+    """
+    # 合并批次内所有章节文本
+    combined_text = "\n\n".join([
+        f"## {section['title']}\n{section['text']}"
+        for section in batch["sections"]
+    ])
+    
+    # 构建 Prompt（添加批次信息）
+    batch_info = ""
+    if total_batches > 1:
+        batch_info = f"\n\n【注意】这是第 {batch_index + 1}/{total_batches} 批次的 PRD 内容，请基于本批次内容生成测试用例。用例 ID 从 TC-{(batch_index * 100 + 1):03d} 开始编号。"
+    
+    final_prompt = prompt_template.format(prd_content=combined_text) + batch_info
+    
+    # 收集所有图片
+    all_image_urls = []
+    for section in batch["sections"]:
+        all_image_urls.extend(section["images"])
+    
+    # 构建消息内容
+    content = [{"type": "text", "text": final_prompt}]
+    
+    # 添加图片
+    for img_url in all_image_urls:
+        img_base64 = download_and_process_image(img_url)
+        if img_base64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": img_base64}
+            })
+        else:
+            print(f"跳过无法处理的图片: {img_url}")
+    
+    messages = [
+        {"role": "system", "content": "你是一名资深SQA工程师。请严格基于以下PRD（包含文本和图片）生成测试用例，使用简体中文，不得编造无关场景。"},
+        {"role": "user", "content": content}
+    ]
+    
+    return messages
 
 def _sanitize_table_rows(markdown_text: str) -> str:
     """
@@ -237,7 +424,7 @@ def generate_test_cases():
             resp = {"test_cases": ai_response, "meta": meta}
             return jsonify(resp)
         else:
-            # --- 全量生成（回退：如果禁用视觉则走纯文本路径） ---
+            # --- 全量生成（支持多模态图片识别） ---
             if DISABLE_VISION:
                 print("已启用回退：忽略图片，多模态关闭，执行纯文本全量生成。")
                 final_prompt = prompt_template_full.format(prd_content=new_prd_content)
@@ -260,26 +447,74 @@ def generate_test_cases():
                 resp = {"test_cases": ai_response, "meta": meta}
                 return jsonify(resp)
             else:
-                print("正在执行全量图文生成...(未禁用视觉)")
-                # 若仍需视觉分析请将 DISABLE_VISION 设为0，这里保留原逻辑但已被用户请求回退，代码逻辑已精简。
-                final_prompt = prompt_template_full.format(prd_content=new_prd_content)
-                messages = [
-                    {"role": "system", "content": "你是一名资深SQA工程师。请基于PRD生成测试用例（当前视觉已暂时停用）。"},
-                    {"role": "user", "content": final_prompt}
-                ]
-                completion = client.chat.completions.create(
-                    model=text_model_name,
-                    messages=messages,
-                    max_tokens=4096
-                )
-                ai_response = completion.choices[0].message.content
-                ai_response = _sanitize_table_rows(ai_response)
+                # 启用多模态处理
+                print("正在执行全量图文生成（多模态已启用）...")
+                
+                # 1. 解析 PRD 结构
+                sections = parse_prd_sections(new_prd_content)
+                total_images = sum(len(s["images"]) for s in sections)
+                print(f"解析完成：{len(sections)} 个章节，共 {total_images} 张图片")
+                
+                # 2. 检查是否有图片
+                if total_images == 0:
+                    # 无图片，降级为纯文本模式
+                    print("未检测到图片，使用文本模型处理")
+                    final_prompt = prompt_template_full.format(prd_content=new_prd_content)
+                    messages = [
+                        {"role": "system", "content": "你是一名资深SQA工程师。请严格基于以下PRD生成测试用例，使用简体中文，不得编造无关场景。"},
+                        {"role": "user", "content": final_prompt}
+                    ]
+                    completion = client.chat.completions.create(
+                        model=text_model_name,
+                        messages=messages,
+                        max_tokens=4096
+                    )
+                    ai_response = completion.choices[0].message.content
+                    ai_response = _sanitize_table_rows(ai_response)
+                    meta = {
+                        "mode": "full-no-images",
+                        "model_used": text_model_name,
+                        "use_vision": False
+                    }
+                    resp = {"test_cases": ai_response, "meta": meta}
+                    return jsonify(resp)
+                
+                # 3. 创建批次
+                batches = create_batches_from_sections(sections, MAX_IMAGES_PER_BATCH)
+                print(f"分批策略：共 {len(batches)} 批次")
+                
+                # 4. 逐批调用视觉模型
+                all_responses = []
+                for i, batch in enumerate(batches):
+                    print(f"处理第 {i+1}/{len(batches)} 批（{batch['total_images']} 张图片，{batch['total_chars']} 字符）...")
+                    
+                    # 构建多模态消息
+                    messages = build_vision_messages(batch, prompt_template_full, i, len(batches))
+                    
+                    # 调用视觉模型（带重试）
+                    try:
+                        response = _call_model_with_retries(vision_model_name, messages)
+                        all_responses.append(response)
+                        print(f"第 {i+1} 批完成")
+                    except Exception as e:
+                        print(f"第 {i+1} 批失败: {e}")
+                        all_responses.append("")  # 添加空响应继续处理
+                
+                # 5. 合并结果
+                print("合并所有批次结果...")
+                merged_response = _merge_markdown_tables(all_responses)
+                final_response = _sanitize_table_rows(merged_response)
+                
                 meta = {
-                    "mode": "full-text-no-vision",
-                    "model_used": text_model_name,
-                    "use_vision": False
+                    "mode": "full-vision-multimodal",
+                    "model_used": vision_model_name,
+                    "use_vision": True,
+                    "total_batches": len(batches),
+                    "total_images": total_images,
+                    "total_sections": len(sections)
                 }
-                resp = {"test_cases": ai_response, "meta": meta}
+                
+                resp = {"test_cases": final_response, "meta": meta}
                 return jsonify(resp)
 
     # 不会到达：增量路径已提前 return
