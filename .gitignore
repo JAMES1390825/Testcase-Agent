@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Project secrets and local config
+.env
+
+# Large or sample data
+*.csv
+
+# Removed specific files
+海外导航.csv
+海外导航（base on Google Map） v1.2.md
