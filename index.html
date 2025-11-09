@@ -43,26 +43,17 @@
                 </div>
             </div>
             <div class="action-section">
-                                <button id="generateBtn">✨ 生成测试用例</button>
-                                <label style="margin-left:12px;font-size:0.85em;display:inline-flex;align-items:center;gap:4px;">
-                                    <input type="checkbox" id="includePlanToggle"> 同时生成测试方案
-                                </label>
-                <button id="planBtn" class="hidden" style="background-color: #5cb85c;">📋 生成测试方案</button>
+                <button id="generateBtn">✨ 生成测试用例</button>
                 <button id="exportBtn" class="hidden">📄 导出为 CSV</button>
-                                <button id="exportPlanBtn" class="hidden" style="background-color:#17a2b8;">🗂 导出测试方案 CSV</button>
                 <div id="loading" class="hidden">
                     <div class="spinner"></div>
                     <span>正在分析版本差异并生成用例...</span>
                 </div>
             </div>
             <div class="output-section">
-                <h2>结果</h2>
+                <h2>测试用例结果</h2>
                 <div id="testCaseOutput" class="markdown-body">
                     <p class="placeholder">上传文件后，这里将显示全量或增量测试用例（自动选择模式）。</p>
-                </div>
-                <h2 style="margin-top:24px;">测试方案</h2>
-                <div id="testPlanOutput" class="markdown-body">
-                    <p class="placeholder">勾选“同时生成测试方案”或点击“生成测试方案”按钮后，这里显示测试方案。</p>
                 </div>
             </div>
         </main>
