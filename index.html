@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试用例生成智能体（全量 / 增量 / 图文）</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>测试用例生成智能体</h1>
+            <p><strong>支持三种模式：</strong></p>
+            <ul class="mode-list">
+                <li><strong>全量模式：</strong>只上传新版 PRD 文件 → 生成覆盖全部功能的系统化测试用例（含图片的文档自动做图文联合分析）。</li>
+                <li><strong>增量模式：</strong>同时上传旧版 + 新版 PRD → 仅生成新增、修改、删除影响范围的差异测试用例。</li>
+                <li><strong>智能模型切换：</strong>含图片自动使用视觉模型；纯文本或版本对比使用文本模型，降低成本。</li>
+            </ul>
+            <p class="tips">提示：新版 PRD 中的 <code>![](url)</code> 图片会被自动抓取分析；若图片无法访问则跳过并继续处理文本。</p>
+        </header>
+        <main>
+            <div class="input-section">
+                <div class="prd-upload-container">
+                    <div class="prd-upload-wrapper">
+                        <h2>1. 旧版 PRD（增量模式可选）</h2>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="oldPrdInput" accept=".md, .txt">
+                            <label for="oldPrdInput" class="file-upload-label">
+                                <span id="oldPrdFileName">点击或拖拽文件到此处</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="prd-upload-wrapper">
+                        <h2>2. 新版 PRD（必填）</h2>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="newPrdInput" accept=".md, .txt">
+                            <label for="newPrdInput" class="file-upload-label">
+                                <span id="newPrdFileName">点击或拖拽文件到此处</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="action-section">
+                                <button id="generateBtn">✨ 生成测试用例</button>
+                                <label style="margin-left:12px;font-size:0.85em;display:inline-flex;align-items:center;gap:4px;">
+                                    <input type="checkbox" id="includePlanToggle"> 同时生成测试方案
+                                </label>
+                <button id="planBtn" class="hidden" style="background-color: #5cb85c;">📋 生成测试方案</button>
+                <button id="exportBtn" class="hidden">📄 导出为 CSV</button>
+                                <button id="exportPlanBtn" class="hidden" style="background-color:#17a2b8;">🗂 导出测试方案 CSV</button>
+                <div id="loading" class="hidden">
+                    <div class="spinner"></div>
+                    <span>正在分析版本差异并生成用例...</span>
+                </div>
+            </div>
+            <div class="output-section">
+                <h2>结果</h2>
+                <div id="testCaseOutput" class="markdown-body">
+                    <p class="placeholder">上传文件后，这里将显示全量或增量测试用例（自动选择模式）。</p>
+                </div>
+                <h2 style="margin-top:24px;">测试方案</h2>
+                <div id="testPlanOutput" class="markdown-body">
+                    <p class="placeholder">勾选“同时生成测试方案”或点击“生成测试方案”按钮后，这里显示测试方案。</p>
+                </div>
+            </div>
+        </main>
+        <footer>
+            <p>由 GitHub Copilot 驱动</p>
+        </footer>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

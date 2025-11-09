@@ -1,0 +1,5 @@
+Flask==2.1.2
+openai
+python-dotenv
+Werkzeug==2.1.2
+requests
