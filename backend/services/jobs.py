@@ -1,0 +1,252 @@
+"""In-memory job runner for async generation with progress and ETA."""
+
+from __future__ import annotations
+
+import threading
+import time
+import uuid
+from typing import Any, Dict, List
+
+from flask import current_app
+
+from backend.services import (
+    create_openai_client,
+    build_vision_messages,
+    call_model_with_retries,
+    create_batches_from_sections,
+    merge_csv_texts,
+    validate_strict_csv,
+    coerce_to_strict_csv,
+    parse_prd_sections,
+    make_key,
+    cache_get,
+    cache_set,
+)
+from backend.config import (
+    DISABLE_VISION_DEFAULT,
+    IMAGE_MAX_SIZE_DEFAULT,
+    IMAGE_QUALITY_DEFAULT,
+    MAX_IMAGES_PER_BATCH_DEFAULT,
+    MAX_SECTION_CHARS_DEFAULT,
+    BATCH_INFERENCE_CONCURRENCY_DEFAULT,
+    IMAGE_DOWNLOAD_CONCURRENCY_DEFAULT,
+)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+_JOBS: Dict[str, Dict[str, Any]] = {}
+_LOCK = threading.Lock()
+
+
+def _update(job_id: str, **kwargs: Any) -> None:
+    with _LOCK:
+        _JOBS[job_id].update(kwargs)
+
+
+def start_generate_job(payload: Dict[str, Any]) -> str:
+    job_id = uuid.uuid4().hex
+    with _LOCK:
+        _JOBS[job_id] = {
+            "status": "pending",
+            "progress": {"current": 0, "total": 0},
+            "eta_seconds": None,
+            "error": None,
+            "result": None,
+            "meta": None,
+            "started_at": None,
+        }
+    t = threading.Thread(target=_run_job, args=(job_id, payload), daemon=True)
+    t.start()
+    return job_id
+
+
+def get_job(job_id: str) -> Dict[str, Any] | None:
+    with _LOCK:
+        return _JOBS.get(job_id)
+
+
+def _run_job(job_id: str, data: Dict[str, Any]) -> None:
+    _update(job_id, status="running", started_at=time.time())
+    start_ts = time.time()
+    try:
+        new_prd_content = data.get("new_prd")
+        old_prd_content = data.get("old_prd")
+        user_config: dict = data.get("config") or {}
+
+        user_api_key = user_config.get("api_key")
+        user_base_url = user_config.get("base_url")
+        user_text_model = user_config.get("text_model")
+        user_vision_model = user_config.get("vision_model")
+        user_disable_vision = user_config.get("disable_vision", DISABLE_VISION_DEFAULT)
+        user_max_images_per_batch = user_config.get("max_images_per_batch") or MAX_IMAGES_PER_BATCH_DEFAULT
+        user_image_max_size = user_config.get("image_max_size") or IMAGE_MAX_SIZE_DEFAULT
+        user_image_quality = user_config.get("image_quality") or IMAGE_QUALITY_DEFAULT
+        user_max_section_chars = user_config.get("max_section_chars") or MAX_SECTION_CHARS_DEFAULT
+        user_batch_infer_conc = user_config.get("batch_inference_concurrency") or BATCH_INFERENCE_CONCURRENCY_DEFAULT
+        user_image_dl_conc = user_config.get("image_download_concurrency") or IMAGE_DOWNLOAD_CONCURRENCY_DEFAULT
+
+        # Cache lookup before heavy work
+        cache_key = make_key({
+            "old_prd": old_prd_content or "",
+            "new_prd": new_prd_content or "",
+            "config": user_config,
+        })
+        cached = cache_get(cache_key)
+        if cached:
+            _update(job_id, status="done", result=cached["result"], meta=cached.get("meta"), eta_seconds=0)
+            return
+
+        user_client = create_openai_client(user_api_key, user_base_url)
+        prompt_template_full, prompt_template_diff = current_app.config["PROMPT_TEMPLATES"]
+
+        # Incremental (text) mode always single batch
+        if old_prd_content and old_prd_content.strip():
+            final_prompt = prompt_template_diff.format(
+                old_prd_content=old_prd_content,
+                new_prd_content=new_prd_content,
+            )
+            messages = [
+                {"role": "system", "content": "你是一名顶级的、经验丰富的软件测试保证（SQA）工程师。请始终使用简体中文输出。"},
+                {"role": "user", "content": final_prompt},
+            ]
+            completion = user_client.chat.completions.create(
+                model=user_text_model,
+                messages=messages,
+                max_tokens=4096,
+            )
+            ai_response = completion.choices[0].message.content
+            _update(job_id, progress={"current": 1, "total": 1}, eta_seconds=0)
+            meta = {"mode": "incremental", "model_used": user_text_model, "use_vision": False}
+            cache_set(cache_key, {"result": ai_response, "meta": meta})
+            _update(job_id, status="done", result=ai_response, meta=meta)
+            return
+
+        # Text-only fallback (no images or disabled vision)
+        if user_disable_vision:
+            final_prompt = prompt_template_full.format(prd_content=new_prd_content)
+            messages = [
+                {"role": "system", "content": "你是一名资深SQA工程师。请严格基于以下PRD生成测试用例，使用简体中文，不得编造无关场景。"},
+                {"role": "user", "content": final_prompt},
+            ]
+            completion = user_client.chat.completions.create(
+                model=user_text_model,
+                messages=messages,
+                max_tokens=4096,
+            )
+            ai_response = completion.choices[0].message.content
+            _update(job_id, progress={"current": 1, "total": 1}, eta_seconds=0)
+            meta = {"mode": "full-text-fallback", "model_used": user_text_model, "use_vision": False}
+            cache_set(cache_key, {"result": ai_response, "meta": meta})
+            _update(job_id, status="done", result=ai_response, meta=meta)
+            return
+
+        if not user_vision_model:
+            raise RuntimeError("缺少视觉模型名称")
+
+        sections = parse_prd_sections(new_prd_content)
+        total_images = sum(len(s["images"]) for s in sections)
+        if total_images == 0:
+            final_prompt = prompt_template_full.format(prd_content=new_prd_content)
+            messages = [
+                {"role": "system", "content": "你是一名资深SQA工程师。请严格基于以下PRD生成测试用例，使用简体中文，不得编造无关场景。"},
+                {"role": "user", "content": final_prompt},
+            ]
+            completion = user_client.chat.completions.create(
+                model=user_text_model,
+                messages=messages,
+                max_tokens=4096,
+            )
+            ai_response = completion.choices[0].message.content
+            _update(job_id, progress={"current": 1, "total": 1}, eta_seconds=0)
+            meta = {"mode": "full-no-images", "model_used": user_text_model, "use_vision": False}
+            cache_set(cache_key, {"result": ai_response, "meta": meta})
+            _update(job_id, status="done", result=ai_response, meta=meta)
+            return
+
+        batches = create_batches_from_sections(sections, user_max_images_per_batch, user_max_section_chars)
+        total_batches = len(batches)
+        _update(job_id, progress={"current": 0, "total": total_batches})
+
+        use_deepseek = bool(user_base_url) and "deepseek" in str(user_base_url).lower()
+
+        def run_one(i_b):
+            i, b = i_b
+            t0 = time.time()
+            msgs = build_vision_messages(
+                b,
+                prompt_template_full,
+                i,
+                total_batches,
+                use_deepseek=use_deepseek,
+                image_max_size=user_image_max_size,
+                image_quality=user_image_quality,
+                image_download_concurrency=int(user_image_dl_conc),
+            )
+            try:
+                resp = call_model_with_retries(user_client, user_vision_model, msgs)
+            except Exception:
+                # degrade to text only
+                combined_text = "\n\n".join([f"## {s['title']}\n{s['text']}" for s in b["sections"]])
+                final_prompt2 = prompt_template_full.format(prd_content=combined_text)
+                completion = user_client.chat.completions.create(
+                    model=user_text_model,
+                    messages=[
+                        {"role": "system", "content": "你是一名资深SQA工程师。请严格基于以下PRD生成测试用例，使用简体中文，不得编造无关场景。"},
+                        {"role": "user", "content": final_prompt2},
+                    ],
+                    max_tokens=4096,
+                )
+                resp = completion.choices[0].message.content
+            dt = time.time() - t0
+            # update progress and ETA
+            with _LOCK:
+                cur = _JOBS[job_id]["progress"]["current"] + 1
+                _JOBS[job_id]["progress"]["current"] = cur
+                done = cur
+                remain = total_batches - done
+                # naive ETA based on per-batch average so far
+                elapsed = time.time() - start_ts
+                avg = elapsed / max(1, done)
+                _JOBS[job_id]["eta_seconds"] = int(avg * remain)
+            return i, resp
+
+        # run batches in parallel
+        if total_batches > 1 and int(user_batch_infer_conc) > 1:
+            with ThreadPoolExecutor(max_workers=int(user_batch_infer_conc)) as ex:
+                futs = [ex.submit(run_one, (i, b)) for i, b in enumerate(batches)]
+                results = {}
+                for fut in as_completed(futs):
+                    i, r = fut.result()
+                    results[i] = r
+            responses = [results.get(i, "") for i in range(total_batches)]
+        else:
+            responses: List[str] = []
+            for i, b in enumerate(batches):
+                _, r = run_one((i, b))
+                responses.append(r)
+
+        final_response = merge_csv_texts(responses)
+        ok, reason = validate_strict_csv(final_response)
+        if not ok:
+            repaired = coerce_to_strict_csv(final_response)
+            ok2, reason2 = validate_strict_csv(repaired)
+            if not ok2:
+                raise RuntimeError(f"AI 输出不是规范 CSV：{reason2}")
+            final_response = repaired
+
+        meta = {
+            "mode": "full-vision-multimodal",
+            "model_used": user_vision_model,
+            "use_vision": True,
+            "total_batches": total_batches,
+            "total_images": total_images,
+            "total_sections": len(sections),
+        }
+
+        cache_set(cache_key, {"result": final_response, "meta": meta})
+        _update(job_id, status="done", result=final_response, meta=meta, eta_seconds=0)
+    except Exception as exc:  # noqa: BLE001
+        _update(job_id, status="error", error=str(exc))
+
+
+__all__ = ["start_generate_job", "get_job"]

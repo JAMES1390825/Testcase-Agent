@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试用例生成智能体</title>
+    <link rel="stylesheet" href="./css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>测试用例生成智能体</h1>
+            <p>一键生成、完善并管理 PRD 测试用例，支持文本与多模态协作。</p>
+        </header>
+
+        <nav class="tab-nav">
+            <button class="tab-link active" data-target="generateTab">📝 PRD 生成测试用例</button>
+            <button class="tab-link" data-target="enhanceTab">✨ 完善测试用例</button>
+            <button class="tab-link" data-target="configTab">⚙️ 模型配置</button>
+        </nav>
+
+        <div id="generateTab" class="tab-pane active">
+            <section class="tab-intro">
+                <p><strong>支持三种模式：</strong></p>
+                <ul class="mode-list">
+                    <li><strong>全量模式：</strong>只上传新版 PRD → 生成覆盖全部功能的系统化测试用例。</li>
+                    <li><strong>增量模式：</strong>同时上传旧版 + 新版 PRD → 输出差异范围的增量用例。</li>
+                    <li><strong>智能模型切换：</strong>含图片会自动启用视觉模型，纯文本使用文本模型降本。</li>
+                </ul>
+                <p class="tips">提示：新版 PRD 中的 <code>![](url)</code> 图片会自动抓取分析；无法访问的图片会被跳过。</p>
+            </section>
+
+            <form id="generateForm" class="tab-form">
+                <section>
+                    <h2 class="section-title">上传 PRD 文档</h2>
+                    <div class="input-grid">
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="generateOldPrd" accept=".md,.txt">
+                            <label for="generateOldPrd" class="file-upload-label">
+                                <strong>旧版 PRD（增量模式可选）</strong>
+                                <span id="generateOldPrdLabel">点击或拖拽文件到此处</span>
+                            </label>
+                        </div>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="generateNewPrd" accept=".md,.txt">
+                            <label for="generateNewPrd" class="file-upload-label">
+                                <strong>新版 PRD（必填）</strong>
+                                <span id="generateNewPrdLabel">点击或拖拽文件到此处</span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="action-section">
+                    <button type="submit" id="generateSubmit">✨ 生成测试用例</button>
+                    <button type="button" id="generateExport" class="secondary-button hidden">📄 导出为 CSV</button>
+                    <div id="generateLoading" class="loading hidden">
+                        <div class="spinner"></div>
+                        <span>AI 正在分析 PRD...</span>
+                        <span id="generateTimer" class="timer hidden"></span>
+                    </div>
+                </section>
+
+                <section class="output-section">
+                    <div id="generateModeIndicator" class="mode-indicator hidden"></div>
+                    <div id="generateOutput" class="markdown-body">
+                        <p class="placeholder">上传文件后，这里将显示全量或增量测试用例。</p>
+                    </div>
+                    <div class="vision-hint">
+                        多模态识别依赖视觉模型配置，若禁用视觉将默认仅使用文本模型。
+                    </div>
+                </section>
+            </form>
+        </div>
+
+        <div id="enhanceTab" class="tab-pane">
+            <section class="tab-intro">
+                <p><strong>上传现有测试用例，AI 将帮助你：</strong></p>
+                <ul class="mode-list">
+                    <li>📋 补充用户场景（正向流程、边界条件）</li>
+                    <li>⚠️ 添加异常场景（错误处理、异常输入）</li>
+                    <li>🔍 完善测试步骤和预期结果</li>
+                    <li>✅ 优化覆盖度与可执行性</li>
+                </ul>
+                <p class="tips">支持上传 Markdown、TXT 或 Excel/CSV 表格格式。</p>
+            </section>
+
+            <form id="enhanceForm" class="tab-form">
+                <section>
+                    <h2 class="section-title">上传测试用例文档</h2>
+                    <div class="file-upload-wrapper">
+                        <input type="file" id="enhanceFile" accept=".md,.txt,.csv,.xlsx,.xls">
+                        <label for="enhanceFile" class="file-upload-label">
+                            <strong>选择文件</strong>
+                            <span id="enhanceFileLabel">点击或拖拽文件到此处</span>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="action-section">
+                    <button type="submit" id="enhanceSubmit">✨ 完善测试用例</button>
+                    <button type="button" id="enhanceExport" class="secondary-button hidden">📄 导出为 CSV</button>
+                    <div id="enhanceLoading" class="loading hidden">
+                        <div class="spinner"></div>
+                        <span>AI 正在完善测试用例...</span>
+                        <span id="enhanceTimer" class="timer hidden"></span>
+                    </div>
+                </section>
+
+                <section class="output-section">
+                    <div id="enhanceOutput" class="markdown-body">
+                        <p class="placeholder">上传测试用例后，AI 将在此输出完善结果。</p>
+                    </div>
+                </section>
+            </form>
+        </div>
+
+        <div id="configTab" class="tab-pane">
+            <section class="tab-intro">
+                <p><strong>所有配置仅存储在浏览器本地。</strong> API Key、模型名称等不会发送到服务器，后端只接收请求时显式传入的参数。</p>
+            </section>
+
+            <div class="config-grid">
+                <div class="config-group">
+                    <label for="configApiKey">API Key</label>
+                    <input type="password" id="configApiKey" placeholder="请输入 API Key">
+                    <small>仅本地保存，不会上传到服务器。</small>
+                </div>
+                <div class="config-group">
+                    <label for="configBaseUrl">API Base URL</label>
+                    <input type="text" id="configBaseUrl" placeholder="如 https://api.openai.com/v1">
+                    <small>可选，留空将使用默认官方地址。</small>
+                </div>
+                <div class="config-group">
+                    <label for="configTextModel">文本模型名称</label>
+                    <input type="text" id="configTextModel" placeholder="必填，如 gpt-4.1-mini">
+                    <small>用于文本生成、新旧版本对比等任务。</small>
+                </div>
+                <div class="config-group vision-required">
+                    <label for="configVisionModel">视觉模型名称</label>
+                    <input type="text" id="configVisionModel" placeholder="如 gpt-4.1-vision-preview">
+                    <small>当启用图片识别时必填。</small>
+                </div>
+                <div class="config-group checkbox-group">
+                    <input type="checkbox" id="configDisableVision" checked>
+                    <label for="configDisableVision">禁用图片识别</label>
+                </div>
+                <div id="configVisionParams" class="config-group vision-params hidden">
+                    <label for="configMaxImagesPerBatch">每批次最大图片数</label>
+                    <input type="number" id="configMaxImagesPerBatch" min="1" max="50" value="10">
+                    <small>单批最多处理的图片数量。</small>
+                </div>
+                <div id="configImageMaxSizeWrap" class="config-group vision-params hidden">
+                    <label for="configImageMaxSize">图片压缩尺寸（像素）</label>
+                    <input type="number" id="configImageMaxSize" min="512" max="2048" step="128" value="1024">
+                    <small>图片压缩后的最大边长。</small>
+                </div>
+                <div id="configImageQualityWrap" class="config-group vision-params hidden">
+                    <label for="configImageQuality">JPEG 压缩质量</label>
+                    <input type="number" id="configImageQuality" min="50" max="100" value="85">
+                    <small>0-100，数值越高质量越好。</small>
+                </div>
+                <div class="config-group">
+                    <label for="configMaxSectionChars">单章节字符上限</label>
+                    <input type="number" id="configMaxSectionChars" min="10000" max="100000" step="1000" value="60000">
+                    <small>用于切分长文档的阈值。</small>
+                </div>
+            </div>
+
+            <div class="config-actions">
+                <button type="button" id="configSave">保存配置</button>
+                <button type="button" id="configExportEnv" class="secondary-button">复制为 .env</button>
+                <div class="vision-required">
+                    如需启用视觉模型，请取消禁用开关并填写视觉模型名称。
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>

@@ -1,6 +1,10 @@
+# 核心依赖
 Flask==2.1.2
 openai
-python-dotenv
 Werkzeug==2.1.2
 requests
 Pillow
+urllib3
+
+# 生产环境依赖（云服务器部署时需要）
+gunicorn==21.2.0

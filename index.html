@@ -3,22 +3,100 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>测试用例生成智能体（全量 / 增量 / 图文）</title>
+    <title>测试用例生成智能体</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>测试用例生成智能体</h1>
-            <p><strong>支持三种模式：</strong></p>
-            <ul class="mode-list">
-                <li><strong>全量模式：</strong>只上传新版 PRD 文件 → 生成覆盖全部功能的系统化测试用例（含图片的文档自动做图文联合分析）。</li>
-                <li><strong>增量模式：</strong>同时上传旧版 + 新版 PRD → 仅生成新增、修改、删除影响范围的差异测试用例。</li>
-                <li><strong>智能模型切换：</strong>含图片自动使用视觉模型；纯文本或版本对比使用文本模型，降低成本。</li>
-            </ul>
-            <p class="tips">提示：新版 PRD 中的 <code>![](url)</code> 图片会被自动抓取分析；若图片无法访问则跳过并继续处理文本。</p>
         </header>
+
+        <!-- 全局模型配置（不再使用弹窗与按钮） -->
+        <section id="configPanel" class="config-panel">
+            <h2>⚙️ 模型配置</h2>
+            <div class="config-body">
+                <div class="config-group">
+                    <label for="apiKey">API Key</label>
+                    <input type="password" id="apiKey" placeholder="" />
+                    <small>仅前端保存（浏览器本地），服务器不再使用环境变量</small>
+                </div>
+                <div class="config-group">
+                    <label for="baseUrl">API Base URL</label>
+                    <input type="text" id="baseUrl" placeholder="" />
+                    <small>例如 https://api.openai.com/v1 或自定义代理地址；可留空使用官方默认</small>
+                </div>
+                <div class="config-group">
+                    <label for="textModel">文本模型名称</label>
+                    <input type="text" id="textModel" placeholder="" />
+                    <small>必填（用于文本生成与增量模式）</small>
+                </div>
+                <div class="config-group">
+                    <label for="visionModel">视觉模型名称</label>
+                    <input type="text" id="visionModel" placeholder="" />
+                    <small>当启用图片识别时必填</small>
+                </div>
+                <div class="config-group checkbox-group">
+                    <label>
+                        <input type="checkbox" id="disableVision" checked />
+                        <strong>禁用图片识别</strong>（勾选后仅使用文本模式）
+                    </label>
+                </div>
+                <div id="visionParams" class="vision-params hidden">
+                    <div class="config-group">
+                        <label for="maxImagesPerBatch">每批次最大图片数</label>
+                        <input type="number" id="maxImagesPerBatch" value="10" min="1" max="50" />
+                        <small>单批最多处理的图片数量（默认10）</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="imageMaxSize">图片压缩尺寸（像素）</label>
+                        <input type="number" id="imageMaxSize" value="1024" min="512" max="2048" step="128" />
+                        <small>图片压缩后的最大边长（默认1024像素）</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="imageQuality">JPEG 压缩质量</label>
+                        <input type="number" id="imageQuality" value="85" min="50" max="100" />
+                        <small>图片压缩质量，0-100（默认85）</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="maxSectionChars">单章节字符上限</label>
+                        <input type="number" id="maxSectionChars" value="60000" min="10000" max="100000" step="1000" />
+                        <small>单章节文本字符数上限（默认60000）</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="batchInferConc">批次并发数</label>
+                        <input type="number" id="batchInferConc" value="2" min="1" max="8" />
+                        <small>同时并行处理的批次数（默认2，建议2-4，根据你的API限流调整）</small>
+                    </div>
+                    <div class="config-group">
+                        <label for="imageDlConc">图片下载并发数</label>
+                        <input type="number" id="imageDlConc" value="4" min="1" max="16" />
+                        <small>单批内并行下载/压缩图片的并发度（默认4，建议4-8）</small>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 导航栏 -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="generate">📝 PRD生成测试用例</button>
+            <button class="tab-btn" data-tab="enhance">✨ 完善测试用例</button>
+        </nav>
+
+        <!-- Tab 1: PRD生成测试用例 -->
+        <div id="generateTab" class="tab-content active">
+            <div class="tab-intro">
+                <p><strong>支持三种模式：</strong></p>
+                <ul class="mode-list">
+                    <li><strong>全量模式：</strong>只上传新版 PRD 文件 → 生成覆盖全部功能的系统化测试用例（含图片的文档自动做图文联合分析）。</li>
+                    <li><strong>增量模式：</strong>同时上传旧版 + 新版 PRD → 仅生成新增、修改、删除影响范围的差异测试用例。</li>
+                    <li><strong>智能模型切换：</strong>含图片自动使用视觉模型；纯文本或版本对比使用文本模型，降低成本。</li>
+                </ul>
+                <p class="tips">提示：新版 PRD 中的 <code>![](url)</code> 图片会被自动抓取分析；若图片无法访问则跳过并继续处理文本。</p>
+            </div>
+
         <main>
             <div class="input-section">
                 <div class="prd-upload-container">
@@ -48,20 +126,67 @@
                 <div id="loading" class="hidden">
                     <div class="spinner"></div>
                     <span>正在分析版本差异并生成用例...</span>
+                    <div id="genProgressWrap" style="margin-top:6px; width:100%; max-width:520px;">
+                        <div style="height:6px; background:#eee; border-radius:4px; overflow:hidden;">
+                            <div id="genProgressBar" style="height:6px; width:0%; background:#28a745;"></div>
+                        </div>
+                        <div style="margin-top:6px; font-size:12px; color:#666;">
+                            <span id="genProgressText">准备中…</span>
+                            <span id="genEtaText" style="margin-left:10px;">预计剩余 --</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="output-section">
                 <h2>测试用例结果</h2>
-                <div id="testCaseOutput" class="markdown-body">
+                <div id="testCaseOutput" class="markdown-body scrollable">
                     <p class="placeholder">上传文件后，这里将显示全量或增量测试用例（自动选择模式）。</p>
                 </div>
             </div>
         </main>
-        <footer>
-            <p>由 GitHub Copilot 驱动</p>
-        </footer>
+        </div>
+
+        <!-- Tab 2: 完善测试用例 -->
+        <div id="enhanceTab" class="tab-content">
+            <div class="tab-intro">
+                <p><strong>上传现有测试用例，AI 将帮助你：</strong></p>
+                <ul class="mode-list">
+                    <li>📋 补充更多<strong>用户场景</strong>（正向流程、边界条件）</li>
+                    <li>⚠️ 添加<strong>异常场景</strong>（错误处理、异常输入）</li>
+                    <li>🔍 完善<strong>测试步骤</strong>和<strong>预期结果</strong></li>
+                    <li>✅ 优化测试用例的<strong>覆盖度</strong>和<strong>可执行性</strong></li>
+                </ul>
+                <p class="tips">支持上传 Markdown、TXT 或 Excel/CSV 表格格式的测试用例文档。</p>
+            </div>
+            <div class="input-section">
+                <div class="prd-upload-container">
+                    <div class="prd-upload-wrapper full-width">
+                        <h2>上传测试用例文档</h2>
+                        <div class="file-upload-wrapper">
+                            <input type="file" id="testCaseInput" accept=".md, .txt, .csv, .xlsx, .xls">
+                            <label for="testCaseInput" class="file-upload-label">
+                                <span id="testCaseFileName">点击或拖拽文件到此处</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="action-section">
+                <button id="enhanceBtn">✨ 完善测试用例</button>
+                <button id="exportEnhancedBtn" class="hidden">📄 导出为 CSV</button>
+                <div id="enhanceLoading" class="hidden">
+                    <div class="spinner"></div>
+                    <span>AI 正在分析并完善测试用例...</span>
+                </div>
+            </div>
+            <div class="output-section">
+                <h2>完善后的测试用例</h2>
+                <div id="enhancedOutput" class="markdown-body scrollable">
+                    <p class="placeholder">上传测试用例文档后，AI 将为你补充更多场景和细节。</p>
+                </div>
+            </div>
+        </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
