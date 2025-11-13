@@ -25,6 +25,7 @@ from backend.services import (
 	validate_strict_csv,
 	coerce_to_strict_csv,
 	parse_prd_sections,
+    uploads_get_prd,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -38,6 +39,19 @@ def generate_test_cases():
 
 	new_prd_content: str | None = data.get("new_prd")
 	old_prd_content: str | None = data.get("old_prd")
+	# Allow selecting uploaded PRD files by id
+	new_prd_id = data.get("new_prd_id")
+	old_prd_id = data.get("old_prd_id")
+	if new_prd_id and not new_prd_content:
+		ref = uploads_get_prd(new_prd_id)
+		if not ref:
+			return jsonify({"error": "指定的新PRD文件不存在"}), 404
+		new_prd_content = ref.get("content")
+	if old_prd_id and not old_prd_content:
+		ref2 = uploads_get_prd(old_prd_id)
+		if not ref2:
+			return jsonify({"error": "指定的旧PRD文件不存在"}), 404
+		old_prd_content = ref2.get("content")
 	user_config: dict = data.get("config") or {}
 
 	if not new_prd_content:

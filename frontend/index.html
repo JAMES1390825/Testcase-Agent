@@ -18,6 +18,7 @@
         <nav class="tab-nav">
             <button class="tab-link active" data-target="generateTab">📝 PRD 生成测试用例</button>
             <button class="tab-link" data-target="enhanceTab">✨ 完善测试用例</button>
+            <button class="tab-link" data-target="kbTab">📚 知识库</button>
             <button class="tab-link" data-target="configTab">⚙️ 模型配置</button>
         </nav>
 
@@ -42,6 +43,7 @@
                                 <strong>旧版 PRD（增量模式可选）</strong>
                                 <span id="generateOldPrdLabel">点击或拖拽文件到此处</span>
                             </label>
+                            <button type="button" class="kb-select-btn" data-target="old">📚 从知识库选择</button>
                         </div>
                         <div class="file-upload-wrapper">
                             <input type="file" id="generateNewPrd" accept=".md,.txt">
@@ -49,6 +51,7 @@
                                 <strong>新版 PRD（必填）</strong>
                                 <span id="generateNewPrdLabel">点击或拖拽文件到此处</span>
                             </label>
+                            <button type="button" class="kb-select-btn" data-target="new">📚 从知识库选择</button>
                         </div>
                     </div>
                 </section>
@@ -75,6 +78,56 @@
             </form>
         </div>
 
+        <div id="kbTab" class="tab-pane">
+            <section class="tab-intro">
+                <p><strong>知识库：上传 CSV/MD 文档并自动向量化，支持语义检索，为生成测试用例提供参考上下文。</strong></p>
+            </section>
+            <div class="tab-form">
+                <section>
+                    <h2 class="section-title">📤 上传文档到知识库</h2>
+                    <div class="file-upload-wrapper">
+                        <input type="file" id="kbUploadFile" accept=".md,.csv,.txt">
+                        <label for="kbUploadFile" class="file-upload-label">
+                            <strong>选择文件（支持 .md / .csv / .txt）</strong>
+                            <span id="kbUploadFileLabel">点击或拖拽文件到此处</span>
+                        </label>
+                    </div>
+                    <div class="action-section">
+                        <button type="button" id="kbUploadBtn">📥 上传并入库</button>
+                        <div id="kbUploadLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>正在上传并向量化...</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <h2 class="section-title">📚 知识库文档列表</h2>
+                    <div id="kbDocsList" class="kb-docs-list">
+                        <p class="placeholder">尚无文档，请先上传。</p>
+                    </div>
+                </section>
+
+                <section>
+                    <h2 class="section-title">🔍 语义检索测试</h2>
+                    <div class="config-group">
+                        <label for="kbSearchQuery">输入查询文本</label>
+                        <input type="text" id="kbSearchQuery" placeholder="例如：登录功能测试">
+                    </div>
+                    <div class="action-section">
+                        <button type="button" id="kbSearchBtn">🔍 检索</button>
+                        <div id="kbSearchLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>检索中...</span>
+                        </div>
+                    </div>
+                    <div id="kbSearchResults" class="kb-search-results hidden">
+                        <p class="placeholder">检索结果将显示在此。</p>
+                    </div>
+                </section>
+            </div>
+        </div>
+
         <div id="enhanceTab" class="tab-pane">
             <section class="tab-intro">
                 <p><strong>上传现有测试用例，AI 将帮助你：</strong></p>
@@ -96,6 +149,7 @@
                             <strong>选择文件</strong>
                             <span id="enhanceFileLabel">点击或拖拽文件到此处</span>
                         </label>
+                        <button type="button" class="kb-select-btn" data-target="testcases">📚 从知识库选择</button>
                     </div>
                 </section>
 
@@ -123,6 +177,7 @@
             </section>
 
             <div class="config-grid">
+                <h3 class="config-section-title">🤖 文本生成模型配置</h3>
                 <div class="config-group">
                     <label for="configApiKey">API Key</label>
                     <input type="password" id="configApiKey" placeholder="请输入 API Key">
@@ -135,18 +190,37 @@
                 </div>
                 <div class="config-group">
                     <label for="configTextModel">文本模型名称</label>
-                    <input type="text" id="configTextModel" placeholder="必填，如 gpt-4.1-mini">
+                    <input type="text" id="configTextModel" placeholder="必填，如 gpt-4o">
                     <small>用于文本生成、新旧版本对比等任务。</small>
                 </div>
                 <div class="config-group vision-required">
                     <label for="configVisionModel">视觉模型名称</label>
-                    <input type="text" id="configVisionModel" placeholder="如 gpt-4.1-vision-preview">
+                    <input type="text" id="configVisionModel" placeholder="如 gpt-4o">
                     <small>当启用图片识别时必填。</small>
                 </div>
                 <div class="config-group checkbox-group">
                     <input type="checkbox" id="configDisableVision" checked>
                     <label for="configDisableVision">禁用图片识别</label>
                 </div>
+                
+                <h3 class="config-section-title">📚 知识库 Embedding 模型配置</h3>
+                <div class="config-group">
+                    <label for="configEmbeddingApiKey">Embedding API Key</label>
+                    <input type="password" id="configEmbeddingApiKey" placeholder="请输入 Embedding API Key">
+                    <small>用于知识库文档向量化和语义检索。</small>
+                </div>
+                <div class="config-group">
+                    <label for="configEmbeddingBaseUrl">Embedding API Base URL</label>
+                    <input type="text" id="configEmbeddingBaseUrl" placeholder="如 https://api.openai.com/v1">
+                    <small>可选，留空将使用默认官方地址。</small>
+                </div>
+                <div class="config-group">
+                    <label for="configEmbeddingModel">Embedding 模型名称</label>
+                    <input type="text" id="configEmbeddingModel" placeholder="如 text-embedding-3-small">
+                    <small>推荐使用 text-embedding-3-small（性价比高）。</small>
+                </div>
+                
+                <h3 class="config-section-title">⚙️ 高级参数</h3>
                 <div id="configVisionParams" class="config-group vision-params hidden">
                     <label for="configMaxImagesPerBatch">每批次最大图片数</label>
                     <input type="number" id="configMaxImagesPerBatch" min="1" max="50" value="10">

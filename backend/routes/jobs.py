@@ -5,7 +5,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from backend.services import make_key, cache_get, cache_set
-from backend.services.jobs import start_generate_job, get_job
+from backend.services.jobs import start_generate_job, start_enhance_job, get_job
 
 
 bp = Blueprint("jobs", __name__, url_prefix="/api")
@@ -25,6 +25,20 @@ def generate_async():
         return jsonify({"job_id": None, "cached": True, "result": cached["result"], "meta": cached.get("meta")})
 
     job_id = start_generate_job(data)
+    return jsonify({"job_id": job_id, "cached": False})
+
+
+@bp.route("/enhance_async", methods=["POST"])
+def enhance_async():
+    data = request.get_json() or {}
+    cache_key = make_key({
+        "enhance_of": data.get("test_cases", ""),
+        "config": data.get("config") or {},
+    })
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify({"job_id": None, "cached": True, "result": cached["result"], "meta": cached.get("meta")})
+    job_id = start_enhance_job(data)
     return jsonify({"job_id": job_id, "cached": False})
 
 

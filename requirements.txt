@@ -6,5 +6,10 @@ requests
 Pillow
 urllib3
 
+# 存储与缓存
+SQLAlchemy>=2.0
+psycopg[binary]
+redis>=5
+
 # 生产环境依赖（云服务器部署时需要）
 gunicorn==21.2.0

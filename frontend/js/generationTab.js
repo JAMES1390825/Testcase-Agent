@@ -287,10 +287,21 @@ export function initGenerationTab() {
 
         try {
             const payload = {
-                old_prd: oldPrdText,
-                new_prd: newPrdText,
                 config: buildRequestConfig(),
             };
+            
+            // Support KB selection via global IDs
+            if (window._selectedOldPrdId) {
+                payload.old_prd_id = window._selectedOldPrdId;
+            } else {
+                payload.old_prd = oldPrdText;
+            }
+            
+            if (window._selectedNewPrdId) {
+                payload.new_prd_id = window._selectedNewPrdId;
+            } else {
+                payload.new_prd = newPrdText;
+            }
 
             const response = await fetch("/api/generate", {
                 method: "POST",

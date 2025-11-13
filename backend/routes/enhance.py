@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
+import time
 
-from backend.services import create_openai_client, validate_strict_csv, coerce_to_strict_csv
+from backend.services import (
+	create_openai_client,
+	validate_strict_csv,
+	coerce_to_strict_csv,
+	call_model_with_retries,
+    uploads_get_testcases,
+)
 
 
 bp = Blueprint("enhance", __name__, url_prefix="/api")
@@ -13,7 +20,14 @@ bp = Blueprint("enhance", __name__, url_prefix="/api")
 @bp.route("/enhance", methods=["POST"])
 def enhance_test_cases():
 	data = request.get_json() or {}
+	# Support referencing uploaded test cases by ID
 	test_cases = data.get("test_cases", "")
+	ref_id = data.get("test_cases_id")
+	if ref_id and not test_cases:
+		ref = uploads_get_testcases(ref_id)
+		if not ref:
+			return jsonify({"error": "指定的测试用例文件不存在"}), 404
+		test_cases = ref.get("content", "")
 	user_config: dict = data.get("config") or {}
 
 	if not test_cases.strip():
@@ -52,22 +66,24 @@ def enhance_test_cases():
 请直接输出完善后的完整 CSV 内容。"""
 
 	try:
-		completion = user_client.chat.completions.create(
-			model=user_text_model,
-			messages=[
-				{
-					"role": "system",
-					"content": "你是一位经验丰富的测试工程师，擅长设计全面的测试用例。",
-				},
+		start = time.time()
+		print("[enhance] 开始完善测试用例… 模型=", user_text_model)
+		enhanced_cases = call_model_with_retries(
+			user_client,
+			user_text_model,
+			[
+				{"role": "system", "content": "你是一位经验丰富的测试工程师，擅长设计全面的测试用例。"},
 				{"role": "user", "content": enhance_prompt},
 			],
 			max_tokens=4096,
-			temperature=0.7,
+			timeout=180,
+			extra_kwargs={"temperature": 0.7},
 		)
+		elapsed = time.time() - start
+		print(f"[enhance] 完成，耗时 {elapsed:.1f}s")
 	except Exception as exc:  # noqa: BLE001
 		return jsonify({"error": f"AI 调用失败: {exc}"}), 500
 
-	enhanced_cases = completion.choices[0].message.content
 	# 宽松模式：尽量修复，不再拦截
 	ok, _ = validate_strict_csv(enhanced_cases)
 	if not ok:

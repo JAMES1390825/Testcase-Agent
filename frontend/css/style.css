@@ -385,6 +385,137 @@ button:disabled {
     font-size: 0.85em;
 }
 
+/* Knowledge Base Styles */
+.kb-docs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.kb-doc-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    transition: all 0.2s;
+}
+
+.kb-doc-item:hover {
+    border-color: #cbd5e0;
+    background: #edf2f7;
+}
+
+.kb-doc-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.kb-doc-name {
+    font-weight: 600;
+    color: #213547;
+}
+
+.kb-doc-meta {
+    font-size: 0.85em;
+    color: #64748b;
+}
+
+.kb-doc-type {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #dbeafe;
+    color: #1e40af;
+    border-radius: 4px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+.kb-doc-preview-btn {
+    padding: 6px 14px;
+    font-size: 0.85em;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.kb-doc-preview-btn:hover {
+    background: #2563eb;
+}
+
+.kb-search-results {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.kb-search-result-item {
+    padding: 14px;
+    margin-bottom: 12px;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    background: white;
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.result-rank {
+    font-weight: 700;
+    color: #3b82f6;
+}
+
+.result-score {
+    font-size: 0.85em;
+    color: #64748b;
+}
+
+.result-title {
+    font-weight: 600;
+    color: #213547;
+    margin-bottom: 6px;
+}
+
+.result-text {
+    color: #475569;
+    line-height: 1.5;
+    margin-bottom: 6px;
+}
+
+.result-doc {
+    font-size: 0.8em;
+    color: #94a3b8;
+}
+
+.kb-select-btn {
+    margin-top: 8px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.kb-select-btn:hover {
+    background: #059669;
+}
+
 @media (max-width: 768px) {
     .container {
         padding: 24px 20px 32px;
@@ -399,4 +530,15 @@ button:disabled {
         width: 100%;
         justify-content: center;
     }
+    
+    .kb-doc-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .kb-doc-preview-btn {
+        margin-top: 8px;
+        width: 100%;
+    }
 }
+

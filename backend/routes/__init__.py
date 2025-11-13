@@ -8,6 +8,8 @@ from .generate import bp as generate_bp
 from .enhance import bp as enhance_bp
 from .health import bp as health_bp
 from .jobs import bp as jobs_bp
+from .kb import bp as kb_bp
+from .uploads import bp as uploads_bp
 
 
 def register_routes(app: Flask) -> None:
@@ -15,6 +17,8 @@ def register_routes(app: Flask) -> None:
 	app.register_blueprint(enhance_bp)
 	app.register_blueprint(health_bp)
 	app.register_blueprint(jobs_bp)
+	app.register_blueprint(kb_bp)
+	app.register_blueprint(uploads_bp)
 
 
 __all__ = ["register_routes"]

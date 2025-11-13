@@ -2,6 +2,8 @@ import { initialiseConfigStore, subscribeConfig } from "./configStore.js";
 import { initConfigTab } from "./configTab.js";
 import { initGenerationTab } from "./generationTab.js";
 import { initEnhanceTab } from "./enhanceTab.js";
+import { initKbTab } from "./kbTab.js";
+import { kbManager } from "./knowledgeBase.js";
 
 function showTab(tabId) {
     document.querySelectorAll(".tab-pane").forEach((pane) => {
@@ -37,6 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initConfigTab();
     initGenerationTab();
     initEnhanceTab();
+    initKbTab();
     initVisionToggle();
 
     const defaultTab = document.querySelector(".tab-link.active");

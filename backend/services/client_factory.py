@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 from openai import OpenAI
 from threading import Semaphore, Lock
@@ -37,6 +37,8 @@ def call_model_with_retries(
 	max_tokens: int = 4096,
 	max_retries: int = 2,
 	backoff_base: float = 0.6,
+	timeout: Optional[float] = None,
+	extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> str:
 	"""Call chat.completions with exponential backoff and return message content."""
 
@@ -55,11 +57,21 @@ def call_model_with_retries(
 						if gap < _MIN_INTERVAL_S:
 							sleep(_MIN_INTERVAL_S - gap)
 						globals()['_LAST_CALL_TS'] = monotonic()
-				completion = client_instance.chat.completions.create(
-				model=model_name,
-				messages=list(messages),
-				max_tokens=max_tokens,
-			)
+				api = client_instance.chat.completions
+				# Prefer with_options when available; also pass timeout args for broader compatibility
+				if timeout is not None and hasattr(api, "with_options"):
+					api = api.with_options(timeout=timeout)
+				kwargs: Dict[str, Any] = dict(
+					model=model_name,
+					messages=list(messages),
+					max_tokens=max_tokens,
+				)
+				if timeout is not None:
+					kwargs["timeout"] = timeout
+					kwargs["request_timeout"] = timeout
+				if extra_kwargs:
+					kwargs.update(extra_kwargs)
+				completion = api.create(**kwargs)
 			return completion.choices[0].message.content
 		except Exception as exc:  # noqa: BLE001 - bubble up after retries
 			last_err = exc

@@ -301,29 +301,65 @@ export function initEnhanceTab() {
 
         try {
             const payload = {
-                test_cases: uploadedContent,
                 config: buildRequestConfig(),
             };
+            
+            // Support KB selection via global ID
+            if (window._selectedTestCasesId) {
+                payload.test_cases_id = window._selectedTestCasesId;
+            } else {
+                payload.test_cases = uploadedContent;
+            }
 
-            const response = await fetch("/api/enhance", {
+            // Use async job to avoid long blocking requests
+            const startResp = await fetch("/api/enhance_async", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-
-            if (!response.ok) {
-                const detail = await response.json().catch(() => ({ error: "未知错误" }));
-                throw new Error(`请求失败 ${response.status}: ${detail.error}`);
+            if (!startResp.ok) {
+                const detail = await startResp.json().catch(() => ({ error: "未知错误" }));
+                throw new Error(`启动失败 ${startResp.status}: ${detail.error}`);
             }
+            const startData = await startResp.json();
 
-            const data = await response.json();
-            enhancedContent = data.enhanced_cases || "";
-            if (isLikelyCsv(enhancedContent)) {
-                outputContainer.innerHTML = csvToHtmlTable(enhancedContent);
+            if (startData.cached) {
+                enhancedContent = startData.result || "";
+                if (isLikelyCsv(enhancedContent)) {
+                    outputContainer.innerHTML = csvToHtmlTable(enhancedContent);
+                } else {
+                    renderMarkdown(outputContainer, enhancedContent);
+                }
+                exportButton?.classList.remove("hidden");
             } else {
-                renderMarkdown(outputContainer, enhancedContent);
+                const jobId = startData.job_id;
+                let done = false;
+                while (!done) {
+                    await new Promise((r) => setTimeout(r, 1000));
+                    const st = await fetch(`/api/job_status/${jobId}`);
+                    if (!st.ok) throw new Error("查询任务失败");
+                    const js = await st.json();
+                    if (js.status === "done") {
+                        enhancedContent = js.result || "";
+                        if (isLikelyCsv(enhancedContent)) {
+                            outputContainer.innerHTML = csvToHtmlTable(enhancedContent);
+                        } else {
+                            renderMarkdown(outputContainer, enhancedContent);
+                        }
+                        exportButton?.classList.remove("hidden");
+                        done = true;
+                    } else if (js.status === "error") {
+                        throw new Error(js.error || "任务失败");
+                    } else {
+                        // keep timer running; optionally show ETA if available
+                        const el = document.getElementById("enhanceTimer");
+                        if (el && typeof js.eta_seconds === "number") {
+                            const eta = Math.max(0, js.eta_seconds);
+                            el.textContent = `${el.textContent}（预计剩余 ${Math.floor(eta / 60)}分${eta % 60}秒）`;
+                        }
+                    }
+                }
             }
-            exportButton?.classList.remove("hidden");
         } catch (error) {
             console.error(error);
             outputContainer.innerHTML = `<p class="error">完善失败：${error.message}</p>`;

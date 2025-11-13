@@ -137,7 +137,21 @@ def build_vision_messages(
 
 	content: List[Dict] = [{"type": "text", "text": final_prompt}]
 
-	# Concurrent image processing with bounded workers
+	# If images are already data URLs (preprocessed), just attach them
+	if all(all_u.startswith("data:image") for all_u in all_image_urls if isinstance(all_u, str)) and all_image_urls:
+		for data_url in all_image_urls:
+			if isinstance(data_url, str) and data_url.startswith("data:image"):
+				content.append({"type": "image_url", "image_url": {"url": data_url}})
+		messages = [
+			{
+				"role": "system",
+				"content": "你是一名资深SQA工程师。请严格基于以下PRD（包含文本和图片）生成测试用例，使用简体中文，不得编造无关场景。",
+			},
+			{"role": "user", "content": content},
+		]
+		return messages
+
+	# Concurrent image processing with bounded workers (download + resize)
 	if image_download_concurrency > 1 and len(all_image_urls) > 1:
 		def task(url):
 			return url, download_and_process_image(url, image_max_size, image_quality)
